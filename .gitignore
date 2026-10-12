@@ -1,0 +1,5 @@
+# Abaikan folder dependensi Node.js
+node_modules/
+
+# Abaikan file environment (berisi rahasia/kunci API)
+.env
