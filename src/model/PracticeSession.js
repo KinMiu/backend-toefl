@@ -54,6 +54,15 @@ const practiceSessionSchema = new mongoose.Schema(
         isCorrect: { type: Boolean },
       },
     ],
+    timerType: {
+      type: String,
+      enum: ["session", "question", "none"],
+      default: "question",
+    },
+    totalTimeSec: {
+      type: Number,
+      default: null,
+    },
     timePerQuestionSec: {
       type: Number,
       default: null,

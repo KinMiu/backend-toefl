@@ -185,6 +185,8 @@ exports.startPractice = async (req, res) => {
       data: {
         sessionNumber: userSessionCount + 1,
         isSurpriseCheckSession,
+        timerType: validated.timerType || (validated.totalTimeSec ? "session" : validated.timePerQuestionSec ? "question" : "none"),
+        totalTimeSec: validated.totalTimeSec || null,
         timePerQuestionSec: validated.timePerQuestionSec || null,
         totalQuestions: clientQuestions.length,
         questions: clientQuestions,
@@ -306,6 +308,8 @@ exports.submitPractice = async (req, res) => {
         selectedAnswer: e.selectedAnswer,
         isCorrect: e.isCorrect,
       })),
+      timerType: validated.timerType || (validated.totalTimeSec ? "session" : validated.timePerQuestionSec ? "question" : "none"),
+      totalTimeSec: validated.totalTimeSec || null,
       timePerQuestionSec: validated.timePerQuestionSec || null,
     });
 
