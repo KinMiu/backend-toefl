@@ -6,9 +6,17 @@ logger.prototype.info = function (logText) {
     console.log(`[${format(new Date(), "dd-MM-yyyy HH:mm:ss")}] INFO: ${logText}`)
 }
 
+logger.prototype.warn = function (logText) {
+    console.log(`[${format(new Date(), "dd-MM-yyyy HH:mm:ss")}] WARN: ${logText}`)
+}
+
 logger.prototype.error = function (logText) {
-    logText = process.env.NODE_ENV !== 'production' ? logText.stack : logText.message
-    console.log(`[${format(new Date(), "dd-MM-yyyy HH:mm:ss")}] ERROR: ${logText instanceof Error ? logText.message : logText}`)
+    const msg = logText instanceof Error ? (process.env.NODE_ENV !== 'production' ? logText.stack : logText.message) : logText
+    console.log(`[${format(new Date(), "dd-MM-yyyy HH:mm:ss")}] ERROR: ${msg}`)
+}
+
+logger.prototype.debug = function (logText) {
+    console.log(`[${format(new Date(), "dd-MM-yyyy HH:mm:ss")}] DEBUG: ${logText}`)
 }
 
 module.exports = new logger()

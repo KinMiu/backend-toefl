@@ -135,7 +135,7 @@ async function generateQuestionsBatch(targetCount = 5) {
 
   const apiKey = process.env.GEMINI_API_KEY;
 
-  if (apiKey && apiKey.trim().length > 0) {
+  if (apiKey && apiKey.trim().length > 0 && !apiKey.includes("your_gemini_api_key")) {
     try {
       const ai = new GoogleGenAI({ apiKey: apiKey.trim() });
 

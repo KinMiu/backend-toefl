@@ -24,9 +24,39 @@ exports.startPractice = async (req, res) => {
     const userSessionCount = await PracticeSession.countDocuments({ userId });
     const isSurpriseCheckSession = (userSessionCount + 1) % 10 === 0;
 
-    let selectedQuestions = [];
+    // 2. Tentukan target komposisi Part A (Sentence Completion) & Part B (Error Identification)
+    // Untuk simulasi full 40 soal Section 2: 15 soal Part A dan 25 soal Part B
+    const targetPartA = targetCount === 40 ? 15 : Math.max(1, Math.round(targetCount * (15 / 40)));
+    const targetPartB = targetCount - targetPartA;
 
-    // 2. Jika sesi Surprise Check (kelipatan 10), ambil 1-2 soal berstatus "kept"
+    const selectedIdSet = new Set();
+    const selectedPartA = [];
+    const selectedPartB = [];
+
+    const addQuestion = (q) => {
+      if (!q || !q._id) return false;
+      const idStr = q._id.toString();
+      if (selectedIdSet.has(idStr)) return false;
+      selectedIdSet.add(idStr);
+
+      if (q.type === "sentence_completion") {
+        selectedPartA.push(q);
+      } else {
+        selectedPartB.push(q);
+      }
+      return true;
+    };
+
+    // Helper untuk shuffle array in-place
+    const shuffleArray = (arr) => {
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+      }
+      return arr;
+    };
+
+    // Step A: Surprise Check (kelipatan 10): ambil 1-2 soal "kept"
     if (isSurpriseCheckSession) {
       const keptProgress = await UserQuestionProgress.find({
         userId,
@@ -38,12 +68,16 @@ exports.startPractice = async (req, res) => {
 
       for (const p of keptProgress) {
         if (p.questionId) {
-          selectedQuestions.push(p.questionId);
+          if (p.questionId.type === "sentence_completion" && selectedPartA.length < targetPartA) {
+            addQuestion(p.questionId);
+          } else if (p.questionId.type === "error_identification" && selectedPartB.length < targetPartB) {
+            addQuestion(p.questionId);
+          }
         }
       }
     }
 
-    // 3. Ambil progres user yang "active"
+    // Step B: Ambil progres user yang "active" (prioritaskan yang streak rendah / perlu penguatan)
     const activeProgress = await UserQuestionProgress.find({
       userId,
       status: "active",
@@ -51,46 +85,89 @@ exports.startPractice = async (req, res) => {
       .sort({ streak_correct: 1, lastAttempt: 1 })
       .populate("questionId");
 
-    const activeQuestionIdsFromProgress = new Set();
     for (const p of activeProgress) {
-      if (p.questionId && !selectedQuestions.some((q) => q._id.toString() === p.questionId._id.toString())) {
-        selectedQuestions.push(p.questionId);
-        activeQuestionIdsFromProgress.add(p.questionId._id.toString());
+      if (p.questionId) {
+        if (p.questionId.type === "sentence_completion" && selectedPartA.length < targetPartA) {
+          addQuestion(p.questionId);
+        } else if (p.questionId.type === "error_identification" && selectedPartB.length < targetPartB) {
+          addQuestion(p.questionId);
+        }
       }
-      if (selectedQuestions.length >= targetCount) break;
+      if (selectedPartA.length >= targetPartA && selectedPartB.length >= targetPartB) break;
     }
 
-    // 4. Jika masih kurang, cari soal yang belum pernah dikerjakan user sama sekali
-    if (selectedQuestions.length < targetCount) {
-      const allTestedProgress = await UserQuestionProgress.find({ userId }).select("questionId");
-      const testedIds = allTestedProgress.map((p) => p.questionId.toString());
+    // Ambil daftar ID soal yang pernah dikerjakan user
+    const allTestedProgress = await UserQuestionProgress.find({ userId }).select("questionId");
+    const testedIds = allTestedProgress.map((p) => p.questionId.toString());
 
-      const unattemptedQuestions = await Question.find({
-        _id: { $nin: [...testedIds, ...selectedQuestions.map((q) => q._id.toString())] },
-      }).limit(targetCount - selectedQuestions.length);
-
-      selectedQuestions.push(...unattemptedQuestions);
+    // Step C: Ambil soal yang belum pernah dikerjakan user sama sekali (fresh questions)
+    if (selectedPartA.length < targetPartA) {
+      const neededA = targetPartA - selectedPartA.length;
+      const unattemptedA = await Question.find({
+        type: "sentence_completion",
+        _id: { $nin: [...testedIds, ...Array.from(selectedIdSet)] },
+      }).limit(neededA);
+      unattemptedA.forEach((q) => addQuestion(q));
     }
 
-    // 5. Jika total soal yang tersedia di database masih KURANG dari targetCount:
-    // Panggil Gemini AI generator batch 5-10 soal baru (dengan guardrail mutlak)
-    if (selectedQuestions.length < targetCount) {
-      const shortage = targetCount - selectedQuestions.length;
-      logger.info(`Soal kurang ${shortage}. Memanggil Gemini AI Generator...`);
-      const generatedQuestions = await generateQuestionsBatch(Math.max(5, shortage));
-      selectedQuestions.push(...generatedQuestions.slice(0, shortage));
+    if (selectedPartB.length < targetPartB) {
+      const neededB = targetPartB - selectedPartB.length;
+      const unattemptedB = await Question.find({
+        type: "error_identification",
+        _id: { $nin: [...testedIds, ...Array.from(selectedIdSet)] },
+      }).limit(neededB);
+      unattemptedB.forEach((q) => addQuestion(q));
     }
 
-    // 6. Jika masih kurang juga (misal database baru awal diinstal dan AI offline), ambil soal acak yang ada
-    if (selectedQuestions.length < targetCount) {
-      const existingRemaining = await Question.find({
-        _id: { $nin: selectedQuestions.map((q) => q._id.toString()) },
-      }).limit(targetCount - selectedQuestions.length);
-      selectedQuestions.push(...existingRemaining);
+    // Step D: Jika user sudah pernah mencoba semua soal di bank, ambil soal yang belum terpilih di sesi ini
+    if (selectedPartA.length < targetPartA) {
+      const neededA = targetPartA - selectedPartA.length;
+      const remainingA = await Question.find({
+        type: "sentence_completion",
+        _id: { $nin: Array.from(selectedIdSet) },
+      }).limit(neededA);
+      remainingA.forEach((q) => addQuestion(q));
     }
 
-    // Acak urutan soal agar tidak monoton
-    selectedQuestions = selectedQuestions.sort(() => 0.5 - Math.random()).slice(0, targetCount);
+    if (selectedPartB.length < targetPartB) {
+      const neededB = targetPartB - selectedPartB.length;
+      const remainingB = await Question.find({
+        type: "error_identification",
+        _id: { $nin: Array.from(selectedIdSet) },
+      }).limit(neededB);
+      remainingB.forEach((q) => addQuestion(q));
+    }
+
+    // Step E: Jika masih kurang juga (misal database minim), panggil Gemini AI Generator batch
+    if (selectedIdSet.size < targetCount) {
+      const shortage = targetCount - selectedIdSet.size;
+      logger.info(`Soal unik di database kurang (${selectedIdSet.size}/${targetCount}). Memanggil Gemini AI Generator untuk ${shortage} soal...`);
+      try {
+        const generatedQuestions = await generateQuestionsBatch(Math.max(5, shortage));
+        for (const gq of generatedQuestions) {
+          if (selectedIdSet.size >= targetCount) break;
+          addQuestion(gq);
+        }
+      } catch (genErr) {
+        logger.warn(`AI generation fallback warning: ${genErr.message}`);
+      }
+    }
+
+    // Step F: Jika salah satu tipe masih kurang tapi tipe lainnya ada di bank, isi tanpa memandang tipe (tetap wajib 100% UNIK)
+    if (selectedIdSet.size < targetCount) {
+      const remainingAny = await Question.find({
+        _id: { $nin: Array.from(selectedIdSet) },
+      }).limit(targetCount - selectedIdSet.size);
+      remainingAny.forEach((q) => addQuestion(q));
+    }
+
+    // Step G: Susun soal sesuai urutan resmi TOEFL ITP Section 2:
+    // - Part A (Sentence Completion) selalu tampil di awal (No 1-15 pada paket 40)
+    // - Part B (Error Identification) selalu tampil di bagian kedua (No 16-40 pada paket 40)
+    // - Masing-masing bagian diacak urutan nomornya agar tidak monoton
+    const finalPartA = shuffleArray([...selectedPartA]);
+    const finalPartB = shuffleArray([...selectedPartB]);
+    const selectedQuestions = [...finalPartA, ...finalPartB].slice(0, targetCount);
 
     // Keamanan: buang kunci jawaban 'answer' dan 'explanation' saat dikirim ke frontend
     const clientQuestions = selectedQuestions.map((q, index) => ({

@@ -12,7 +12,7 @@ mongo
   .createConnection()
   .then(() => {
     logger.info("SUCCESS CONNECTING TO DATABASE MONGODB");
-    seedDatabase();
+    // seedDatabase() dinonaktifkan dari auto-start agar bank soal tidak otomatis terisi kembali saat restart
   })
   .catch((err) => {
     logger.error("FAILED CONNECTING TO MONGODB: " + err.message);
